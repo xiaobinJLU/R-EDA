@@ -1,0 +1,5 @@
+c('ListingKey','ListingNumber','Term','LoanStatus','BorrowerAPR','BorrowerRate','LenderYield',
+  'ProsperRating (numeric)','ProsperRating (Alpha)','ProsperScore','ListingCategory','Occupation',
+  'EmploymentStatus','DelinquenciesLast7Years','PublicRecordsLast10Years','TotalTrades','DebtToIncomeRatio',
+  'IncomeRange','IncomeVerifiable','StatedMonthlyIncome','LoanOriginalAmount','MonthlyLoanPayment',
+  'Investors')

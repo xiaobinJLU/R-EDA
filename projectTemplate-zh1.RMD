@@ -1,0 +1,603 @@
+贷款数据分析报告
+========================================================
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, packages}
+# 加载你最终使用的所有组件
+# 在这个代码块的分析中。
+
+# 注意，在这个代码块中，将参数 "echo" 设为假。
+# This prevents the code from displaying in the knitted HTML output.这可以避免代码混入 HTML 输出显示。
+# 应当在文件中，对所有代码块设为 echo=FALSE 。
+library(RColorBrewer)
+library(ggplot2)
+library(dplyr)
+library(gridExtra)
+library(party)
+```
+
+```{r echo=FALSE, Load_the_Data}
+# 加载数据
+prosperLoanData <- read.csv('D:/肖彬/project2/prosperLoanData.csv')
+
+#筛选感兴趣的变量，因为这是贷款数据，因而我们根据具有什么样的借款特征会借到更多的钱？以及什么样的借款人特征更容易违约来选择特征变量，年利率有缺失数据
+pro_loan <- prosperLoanData[,c('Term','LoanStatus','LenderYield',
+                               'ProsperRating..Alpha.','ProsperScore',
+                               'ListingCategory..numeric.','Occupation',
+                               'EmploymentStatus','DelinquenciesLast7Years',
+                               'DebtToIncomeRatio','IncomeRange',
+                               'LoanOriginalAmount',
+                               'StatedMonthlyIncome','Investors')]
+pro_loan$ProsperRating..Alpha. <- ordered(pro_loan$ProsperRating..Alpha.,
+                                          c(NA,"HR","E","D","C","B","A","AA"))
+
+pro_loan$ListingCategory..numeric.<- factor(pro_loan$ListingCategory..numeric.,
+        labels=c( NA,'Debt Consolidation','Home Improvement',
+                  'Business','Personal Loan','Student Use', 'Auto', 'Other',
+                  'Baby&Adoption','Boat', 'Cosmetic Procedure', 'Engagement Ring'
+                  ,'Green Loans', 'Household Expenses', 
+                  'Large Purchases','Medical/Dental'
+                  , 'Motorcycle', 'RV', 'Taxes', 'Vacation', 'Wedding Loans'))
+
+#将"Not employed“和"$0"合并为"$0"
+pro_loan$IncomeRange[pro_loan$IncomeRange == "Not employed"] <- "$0"
+
+pro_loan$IncomeRange <- ordered(pro_loan$IncomeRange,c("Not displayed",
+    "Not employed","$0","$1-24,999","$25,000-49,999",
+    "$50,000-74,999","$75,000-99,999","$100,000+"),
+    labels=c("Not displayed","Not employed" ,"$0" , "$1-24k" ,"$25k-49k",
+             "$50k-75k","$75k-100k" , "$100k+"  ))
+
+#贷款状态中含有为Past Due字段的统一归类为PastDue
+
+PastDue <- c("Past Due (>120 days)",
+             "Past Due (1-15 days)",
+             "Past Due (16-30 days)", 
+             "Past Due (31-60 days)",
+             "Past Due (61-90 days)",
+             "Past Due (91-120 days)")
+pro_loan$LoanStatus <- as.character(pro_loan$LoanStatus)
+pro_loan$LoanStatus[pro_loan$LoanStatus %in% PastDue] <- "PastDue"
+#将cancelled归类到current中
+pro_loan$LoanStatus[pro_loan$LoanStatus == "Cancelled"] <- "Current"
+
+#将defaulted归类为chargedoff
+pro_loan$LoanStatus[pro_loan$LoanStatus == "Defaulted"] <- "Chargedoff"
+
+#将FinalPaymentInProgress归类为completed
+pro_loan$LoanStatus[pro_loan$LoanStatus == "FinalPaymentInProgress"] <- "Completed"
+
+
+
+#将"Current"和"Completed"合并，表示按时还款未出现不良记录的
+pro_loan$LoanStatus[pro_loan$LoanStatus == "Current"] <- "Completed"
+
+#将"" 和"Not available"一并和到other里
+pro_loan$EmploymentStatus[pro_loan$EmploymentStatus == ""] <- "Other"
+
+pro_loan$EmploymentStatus[pro_loan$EmploymentStatus == "Not available"] <- "Other"
+
+#可以发现借的周期仅有是1、3、5，因而应该将其转换为factor
+pro_loan$Term<-factor(pro_loan$Term,labels = c( '1 year', '3 year', '5 year'))
+
+pro_loan$LoanStatus<- ordered(pro_loan$LoanStatus,c("Chargedoff","PastDue","Completed"))
+
+pro_loan$EmploymentStatus <- ordered(pro_loan$EmploymentStatus,
+              c("", "Not available", "Not employed", "Other","Part-time" 
+                ,"Full-time","Self-employed" ,"Retired","Employed"))
+
+
+dim(pro_loan)
+str(pro_loan)
+summary(pro_loan)
+```
+
+# 单变量绘图选择：主要特征
+```{r echo=FALSE, Univariate_Plots主要特征}
+ggplot(data=pro_loan,aes(x=LenderYield*100))+geom_histogram(bins = 30)+
+  scale_x_continuous(breaks = seq(-2,50,2))
+
+ggplot(data=pro_loan,aes(x=LenderYield*100,y=..density..))+
+  geom_line(stat = 'density')+
+  scale_x_continuous(breaks = seq(-2,50,2))
+
+``` 
+  
+"LenderYield"贷款收益率是衡量贷款收益的一个重要指标，因而这是我们所要关注的一个因变量。把LenderYield*100可以看做贷款收益率的百分数，数据范围是-1%到36%，数据的整体趋势有两个高峰，分别是14%附近与31%附近，其中出现负的利率令我感到很诧异。
+
+```{r echo=FALSE, Univariate_Plots主要特征1}
+ggplot(data=pro_loan,aes(x=LoanOriginalAmount))+geom_histogram(binwidth=1000)
+ggplot(data=pro_loan,aes(x=LoanOriginalAmount,y=..density..))+
+  geom_line(stat = 'density')
+ggplot(data=pro_loan,aes(x=log(LoanOriginalAmount),y=..density..))+
+  geom_line(stat = 'density')
+
+``` 
+  
+"LoanOriginalAmount"贷款状态也是要重点关注的变量，其中要找出违约与不违约的借款人的差别。可以发现数据是左偏的，同时数据一个很明显的特点就是数据在5000的倍数上集中趋势明显，有好几个尖峰。数据分为1000-35000。经过对数处理， 使得数据趋势向中心靠拢。  
+
+```{r echo=FALSE, Univariate_Plots主要特征2}
+ggplot(data=pro_loan,aes(x=LoanStatus))+geom_bar()
+```  
+  
+"LoanStatus"首次贷款也是我所关注的因变量，有助于我们探索什么样的借款人特征能够借到较多的贷款？可以发现competed状态远高于其他状态的。
+ 
+
+# 单变量绘图选择：分类变量
+```{r echo=FALSE, Univariate_Plots分类变量1}
+ggplot(data=pro_loan,aes(x=IncomeRange))+geom_bar()
+```  
+  
+"IncomeRange" 收入范围比较符合预期，其中中等收入（25k-75k)的人较多，低高收入的人较少。 
+
+```{r echo=FALSE, Univariate_Plots分类变量2}
+ggplot(data=pro_loan,aes(x=ProsperRating..Alpha.))+geom_bar()
+```  
+  
+"ProsperRating..Alpha."可以发现对借款人的评级有29084个缺失值，评级基本上还是呈正态分布的，中等信用(C等级）的人比较多。  
+
+```{r echo=FALSE, Univariate_Plots分类变量3}
+
+data_count <- pro_loan%>%
+  group_by(Occupation) %>%
+  summarise (n = n())
+
+ggplot(aes(x = reorder(Occupation,-n),y = n),data =data_count) +
+  geom_bar(stat = 'identity') +
+  theme(axis.text.x = element_text(angle = 90,
+                                   vjust = 0.5,
+                                   hjust = 1))
+
+```  
+  
+"Occupation"职业的值太多了，整理十分有难度，因而我不选择调整它，其中other值太大了，除other前几位职业是教授、电脑工程师、教师等工作前景较为好的职业。  
+
+```{r echo=FALSE, Univariate_Plots分类变量4}
+ggplot(data=pro_loan ,aes(x=EmploymentStatus))+geom_bar()
+
+```  
+  
+"EmploymentStatus"职业状况来看，贷到款的还是大部分有工作的人。 其中全职与受雇佣的人更多，可能这些人工作比较稳定所以有吧。
+
+```{r echo=FALSE, Univariate_Plots分类变量5}
+ggplot(data=pro_loan ,aes(x=Term))+geom_bar()
+```  
+  
+"Term"可以发现贷款周期周期仅有1、3、5年，其中3年贷出去的最多。
+
+
+```{r echo=FALSE, Univariate_Plots分类变量7}
+data_count <- pro_loan%>%
+  group_by(ListingCategory..numeric.) %>%
+  summarise (n = n())
+
+ggplot(aes(x = reorder(ListingCategory..numeric.,-n),y = n), data = data_count) +
+  geom_bar(stat = 'identity',fill = I('#F23456')) +
+  theme(axis.text.x = element_text(angle = 90,
+                                   vjust = 0.5,
+                                   hjust = 1))+
+geom_text(aes(y=n +2000,label=n),size = 3)
+
+```  
+  
+"ListingCategory..numeric."可以发现贷款理由中债务合并是最多的，其次是其他，家庭改善和用于生意也是比较多的理由。  
+
+# 单变量绘图选择：数值变量
+```{r echo=FALSE, warning= FALSE, Univariate_Plots数值变量1}
+ggplot(data=pro_loan,aes(x=ProsperScore))+geom_bar()+
+  scale_x_continuous(breaks = seq(0,11,1))
+
+```  
+  
+"ProsperScore"缺失值较多，但是基本呈正态分布，每笔贷款的评级还是大部分集中在中等等级,评级从1-11从低到高。 
+
+```{r echo=FALSE, warning= FALSE, Univariate_Plots数值变量2}
+ggplot(data=pro_loan,aes(x=DelinquenciesLast7Years))+geom_histogram(binwidth = 1)+
+  scale_x_continuous()
+ggplot(data=pro_loan,aes(x=DelinquenciesLast7Years))+
+  geom_histogram(binwidth = 0.01)+scale_x_log10()
+```  
+  
+"DelinquenciesLast7Years"进行对数化处理，可数据集中的最大值分散到了其他地方，但仍有从大到小递减的趋势。而且可以发现最大值与平均数、中位数相差甚远。大部分数据集中在了0，说明大部分借款人集合没有违约。而除0以外大部分值在0-39附近。  
+
+```{r echo=FALSE,  warning= FALSE,Univariate_Plots数值变量3}
+ggplot(data=pro_loan,aes(x=DebtToIncomeRatio))+geom_histogram(binwidth = 0.01)
+
+```  
+  
+”DebtToIncomeRatio“也有一定的正态分布趋势，借款人的债务收入比率也是评估其偿债能力的重要指标。没有低于零的，也比较合理。该变量大部分集中在0-0.25,其中最大值为10，而且10还不少。
+
+```{r echo=FALSE, warning= FALSE, Univariate_Plots数值变量4}
+ggplot(data=pro_loan,aes(x=Investors))+geom_histogram(bins = 30)
+
+```  
+  
+"Investors"一般来说贷款投资人数应该与首次贷款金额具有一定的关系，因而我们应该关注这两个变量的关系。大部分贷款人是一个人。 数据集中在1-600附近。 
+
+```{r echo=FALSE, warning= FALSE,Univariate_Plots数值变量5}
+ggplot(data=subset(pro_loan,pro_loan$StatedMonthlyIncome !=0) ,
+       aes(x=StatedMonthlyIncome))+
+  geom_histogram(binwidth = 100)+xlim(c(0,40000))
+```  
+  
+"StatedMonthlyIncome"大部分借款人的月收入还是比较集中，但是有部分过分大的离群值。数据集中在0-20000。  
+
+# 单变量分析  
+
+### 你的数据集结构是什么？  
+我的数据集选取了14个变量，共有113937观测值（"LenderYield"、"LoanStatus"、"Term"、"ProsperScore"、"ProsperRating..Alpha."、"ListingCategory..numeric."、 "Occupation"、"EmploymentStatus" 、 "DebtToIncomeRatio" 、"IncomeRange" 、"StatedMonthlyIncome"。  
+（1）其中有序因子如下  
+(worst) —————-> (best)  
+Term:1year、3year、5year
+pro_loan$ProsperRating..Alpha.:"HR"、"E"、"D"  、"C" 、 "B" 、 "A" 、 "AA"
+LoanStatus:"Chargedoff"、 "PastDue"、 "Completed"  
+IncomeRange: "Not displayed"、"$0" 、"$1-24k" 、 "$25k-49k"、"$50k-75k"、"$75k-100k" 、"$100k+"   
+（2）Other observations:
+大部分Investors是1。  
+LenderYield中位数是0.17和品均是0.18相近。  
+LoanOriginalAmount平均数是8337，最大值35000,而且他在10000、15000等整数值上有较多值，贷款数一般应该都是整数值。  
+DelinquenciesLast7Years大部分是0。  
+StatedMonthlyIncome平均数是5608。  
+DebtToIncomeRatio有较大离群值10。  
+
+
+### 你的数据集内感兴趣的主要特性有哪些？  
+感兴趣的主要特性："LenderYield"贷款收益率是衡量贷款收益的一个重要指标，因而这是我们所要关注的一个因变量。把LenderYield*100   可以看做贷款收益率的百分数;  
+"LoanOriginalAmount"首次贷款也是我所关注的因变量，有助于我们探索什么样的借款人特征能够借到较多的贷款？  
+
+### 你认为数据集内哪些其他特征可以帮助你探索兴趣特点？ 
+"LoanStatus"贷款状态、"Term"贷款周期 、"ProsperScore"贷款评级、"ProsperRating..Alpha."借款人信用评级、 "EmploymentStatus"借款人就业情况 、 "DebtToIncomeRatio"借款人负债收入比 、"IncomeRange"借款人收入范围、"DelinquenciesLast7Years"过去7年违约次数 、"StatedMonthlyIncome"借款人月收入可以帮助我探索、"Investors贷款投资人数"可以帮助我探索。
+
+### 根据数据集内已有变量，你是否创建了任何新变量？  
+没有创建新变量。  
+
+## 在已经探究的特性中，是否存在任何异常分布？你是否对数据进行一些操作，如清洁、调整或改变数据的形式？如果是，你为什么会这样做？  
+1.没有发现有什么异常的分布，倒是部分变量的缺失值比较多。  
+2.对部分变量进行了调整。   
+（1）首先把ProsperRating..Alpha.借款人信用评级转化为有序变量，因为信用等级应该是有序的。  
+（2）ListingCategory..numeric.转化为因子变量，给贷款理由加上了标签，因为本身贷款理由就应该是分类变量，加上标签有助于我们观察什么贷款理由用的比较多。  
+（3）IncomeRange：将"Not employed“和"$0"合并为"$0"，因为没有工作也就相当于没有收入，同时将10，000这种显示方式改为10k，便于观察。  
+（4）LoanStatus：贷款状态中含有为Past   Due字段的统一归类为PastDue，将cancelled归类到current中，将defaulted归类为chargedoff，将FinalPaymentInProgress归类为completed，将"Current"和"Completed"合并，表示按时还款未出现不良记录的。因为本质上取消贷款、正在贷款和已经还款的都可以视为没有违约的，而defaulted和chageoff都相当于违约不还了，而Past Due虽然违约但还有可能还，因而分为三类。  
+（5）EmploymentStatus：将"" 和"Not available"一并和到other里，因为"" 和"Not available"均相当于缺失值，都是不可获取其真实状态的，故一起归到other。  
+（6）可以发现借的周期仅有是1、3、5，因而应该将其转换为factor。  
+
+
+# 双变量绘图选择
+
+## 箱线图
+```{r echo=FALSE,warning= FALSE, Bivariate_Plots1}
+ggplot(data=pro_loan,aes(x=EmploymentStatus ,y=LoanOriginalAmount))+
+  geom_boxplot()
+
+
+```
+  
+从中位数来看可以发现有工作的比没有做的人能贷到的数目更多。数据的离群点都很多，从离群点的来看，employed与self—employed、full-time的离群点也比part-time也比退休或非全职的高，可见全职的有工作的能贷到更多的钱。
+
+```{r echo=FALSE,warning= FALSE, Bivariate_Plots2}
+ggplot(data=subset(pro_loan, !is.na(ProsperRating..Alpha.)),
+       aes(x=ProsperRating..Alpha. ,y=LenderYield*100))+geom_boxplot()
+ggplot(data=subset(pro_loan, !is.na(ProsperRating..Alpha.)),
+       aes(x=ProsperRating..Alpha.,y=LoanOriginalAmount))+geom_boxplot()
+
+by(pro_loan$LenderYield,pro_loan$ProsperRating..Alpha.,summary)
+```
+  
+  可以发现借款人信用评级越高，贷款收益率中位数越低。HR中位数为30% ，E中位数为28% ，D中位数为23% ，C中位数为18% ，B中位数为14% ，A中位数为10% ，AA中位数为7% 。贷款额的中位数也随着信用评级增高而增高，但是C等级以上就不是很明显了。
+
+
+```{r echo=FALSE,warning= FALSE, Bivariate_Plots3}
+ggplot(data=pro_loan,aes(x=Term ,y=LenderYield*100))+geom_boxplot()
+ggplot(data=pro_loan,aes(x=Term ,y=LoanOriginalAmount))+geom_boxplot()
+by(pro_loan$LenderYield,pro_loan$Term,summary)
+
+```
+  
+贷款时长越长，贷款收益率中位数越高,但是3年和5年的界限不是很明显，均为0.17左右，短期贷款1年贷款利率中位数0.13。  
+贷款时长越长，贷款额中位数越高，趋势十分明显，可贷中位数在12000左右，而1年期中位数在4000左右。
+
+```{r echo=FALSE,warning= FALSE, Bivariate_Plots4.1}
+ggplot(data=pro_loan,aes(x=IncomeRange,y=LenderYield*100))+geom_boxplot()
+ggplot(data=pro_loan,aes(x=IncomeRange ,y=LoanOriginalAmount))+geom_boxplot()
+ 
+
+```
+  
+可以发现收入越高，贷款收益率中位数越低，从21%左右下降到15%左右。  
+可以发现收入越高，首次贷款额度中位数越高，从4900上升到12000左右。
+
+```{r echo=FALSE,warning= FALSE, Bivariate_Plots5.1}
+ggplot(data=pro_loan,aes(x=LoanStatus ,y=StatedMonthlyIncome))+geom_boxplot()+
+  scale_y_log10()+coord_cartesian(ylim=c(1000,10000)) 
+
+```
+  
+可以发现StatedMonthlyIncome的中位数越高，越不容易违约。虽然差别不是特别大。
+  
+```{r echo=FALSE,warning= FALSE, Bivariate_Plots6}
+ggplot(data=pro_loan,aes(x=LoanStatus ,y=ProsperScore))+geom_boxplot()
+
+```
+  
+同时还可以发现信用越好，越不容易违约。不违约的中位数为6比其他的都大1左右。
+
+```{r echo=FALSE,warning= FALSE, Bivariate_Plots7}
+ggplot(data=pro_loan,aes(x=LoanStatus ,y=LenderYield*100))+geom_boxplot()+
+  stat_summary(fun.y = 'mean',geom = 'point',shape=23,size=3,fill = 'white')
+
+
+ggplot(data=pro_loan,aes(x=LoanStatus ,y=LoanOriginalAmount))+geom_boxplot()
+by(pro_loan$LenderYield,pro_loan$LoanStatus,summary)
+```
+  
+可以发现贷款利率的中位数越高，越有可能违约。可能是因为收益率高是针对信用低的人，信用低的人还不起钱。贷款不违约的中位数在17%左右比其他的高处6个百分点左右。  
+贷款额越低，越有可能违约。还可以发现大多首次贷款额度较高的都没有违约。应该是这些人能贷到更多的钱往往信用更高，所以更可能还钱。 
+
+
+## 散点图
+```{r echo=FALSE,warning= FALSE, Bivariate_Plots4}
+x <- pro_loan[,c("LenderYield" ,"LoanOriginalAmount",
+                 "Investors","StatedMonthlyIncome",
+                 "DebtToIncomeRatio","DelinquenciesLast7Years")]
+cor(x,use="complete.obs")
+```
+  
+相关性检验可以发现，大多数的数据的相关性并不好。大都低于0.3，只有LoanOriginalAmount和Investors，有LoanOriginalAmount和LenderYield高于0.3。  
+```{r echo=FALSE,warning= FALSE, Bivariate_Plots}
+ggplot(aes(x=StatedMonthlyIncome,y=LoanOriginalAmount),data=pro_loan)+ 
+  geom_point()+coord_cartesian(xlim = c(0,40000))
+
+
+ggplot(aes(x=StatedMonthlyIncome+1,y=LoanOriginalAmount),data=pro_loan)+ 
+  geom_jitter(alpha=1/20)+scale_x_log10()
+```
+  
+本来以为StatedMonthlyIncome与LoanOriginalAmount应该有一定的正向相关关系，但通过绘图与相关系数建议，发现两者关系不大，与常识有点差距。但log(StatedMonthlyIncome)与LoanOriginalAmount在x较大的地方有一定的正向相关关系。
+
+```{r echo=FALSE,warning= FALSE, Bivariate_Plots5.2}
+ggplot(aes(x=LoanOriginalAmount,y=LenderYield),data=pro_loan)+ 
+  geom_jitter(alpha=1/20)
+```
+  
+可以发现较高的贷款值的情况下，贷款收益率不高,因为能贷到较多存款的人信用更好，更容易贷到款，贷款率不容易增加太多。而贷款额在10000-25000的值，就看不出贷款额与利率的明显差距，是在0-10000的贷款收益率高的者更多。
+
+```{r echo=FALSE,warning= FALSE, Bivariate_Plots6.1}
+ggplot(aes(x=Investors,y=LoanOriginalAmount),data=pro_loan)+ 
+  geom_jitter()
+
+ggplot(aes(x=Investors,y=LoanOriginalAmount),
+       data=subset(pro_loan,pro_loan$Investors!=1) )+ 
+  geom_jitter(alpha=1/20)
+
+ggplot(aes(x=Investors,y=LoanOriginalAmount),
+       data=subset(pro_loan,pro_loan$Investors!=1) )+ 
+  geom_jitter(alpha=1/20)+scale_y_log10()+ylab("log(LoanOriginalAmount)")
+```
+  
+因为investor为一个人占了绝大多数的数据，因而刨除investor是一个人的情况，我们可以发现投资人数增大到一定程度，贷款数额基本都较大，这还是比较浅显的道理。第二个图加入了抖动，第三个图将x轴改成对数。
+```{r echo=FALSE,warning= FALSE,Bivariate_Plots7.1}
+ggplot(aes(x=ProsperScore,y=LenderYield*100),
+       data=subset(pro_loan,!is.na(ProsperScore)))+ 
+  geom_point()
+
+ggplot(aes(x=ProsperScore,y=LenderYield*100),
+       data=subset(pro_loan,!is.na(ProsperScore)))+ 
+  geom_jitter(alpha=1/20)
+```
+  
+再一次发现借款人信用评级越高，贷款收益率越低。而中间评级的人贷款收益率的差距则不大。  
+
+
+```{r echo=FALSE,warning= FALSE,Bivariate_Plots8}
+
+ggplot(data=subset(pro_loan,!is.na(DelinquenciesLast7Years)),
+       aes(x=DelinquenciesLast7Years,y=LoanOriginalAmount))+
+  geom_jitter(alpha=1/20)
+```
+
+
+  同时可以发现DelinquenciesLast7Years较高时（超过75次），很难贷到比较多的钱。而0次能贷金额的范围更广。  
+
+# 双变量分析
+
+### 探讨你在这部分探究中观察到的一些关系。这些感兴趣的特性与数据集内其他特性有什么区别？
+数值变量的相关性都太差了，不利于做回归，没有特别强的相关性，仅可以发现investor、LenderYield与LoanOriginalAmount之间的一些很微弱的相关关系。LenderYield与ProsperScore有较为明显的负相关关系，但相关系数却不高,可能因为ProsperScore是离散值的关系。  
+我们还发现LenderYield与LoanOriginalAmount分别对其他变量作图时，总能呈现相反的趋势，也就是说可能往往能贷到的金额数目与贷款率呈负相关关系。  
+我们发现Term 3年时LenderYield中位数与均值最低，而LoanOriginalAmount中位数与均值最高。  
+ProsperRating..Alpha.信用最高时，LenderYield中位数与均值最低，而LoanOriginalAmount中位数与均值最高。  
+IncomeRange在100k以上时，能用最低的利率贷最多的钱。  
+  
+
+
+### 你是否观察到主要特性与其他特性之间的有趣关系？
+本来以为StatedMonthlyIncome与LoanOriginalAmount应该有一定的正向相关关系，但通过绘图与相关系数建议，发现两者关系不大，与常识有点差距。  
+同时可以发现DelinquenciesLast7Years较高时，很难贷到比较多的钱。  
+分类变量我们通过绘制箱线图还是可以发现较为明显的关系，ProsperRating..Alpha.、IncomeRange随着等级的增加，LenderYield中位数与均值呈下降趋势，而LoanOriginalAmount中位数与均值呈上升趋势。  
+同时对StatedMonthlyIncome进行对数处理，发现StatedMonthlyIncome越高，信用越好，LoanStatus越不容易违约。
+另外可以发现贷款收益率越高、首次贷款额度越低，越有可能违约。 
+### 你发现最强的关系是什么？
+并没有发现很强的相关关系，最强的应该是investor与LoanOriginalAmount，LenderYield与ProsperScore。
+
+
+
+# 多变量绘图选择
+##LenderYield与ProsperRating..Alpha.、IncomeRange的关系
+
+
+```{r echo=FALSE, Multivariate_Plots1}
+ggplot(aes(x=LenderYield*100,fill  = ProsperRating..Alpha.),data=subset(pro_loan,!is.na(ProsperRating..Alpha.)))+geom_histogram(bins=30) +facet_wrap(~IncomeRange,scale='free_y')+scale_fill_brewer(type = 'seq')
+
+
+```
+  
+从上图1可以发现在收入较低的情况下，lendyield分布右偏也就是收入较低的情况下lendyield较高，lendyield分布左偏也就是收入较高的情况下lendyield较低，而在该图中颜色深的也就是信用较高的都在左侧，lendyield较低。同时我们可以发现，随着收入的增加深色占的比重也增加，信用与收入呈现正相关关系，信用与收入与lendyield呈负相关关系。  
+
+##LenderYield、LoanOriginalAmount与Term在IncomeRange、ProsperRating变化下的关系
+```{r echo=FALSE, Multivariate_Plots2}
+ggplot(data=pro_loan,aes(x=LoanOriginalAmount,y=..density..,color=Term))+
+  geom_line(stat = 'density')+
+  facet_grid(IncomeRange~. ,scales = 'free_y')+
+  scale_color_brewer(type = 'seq',palette = 7)
+
+```
+   
+从上图我们可以发现在收入较低的情况下（25k)以下，随着收入增加，3年与5年LoanOriginalAmount的分布向左偏，3年与5年的分布不太一致。但是我们可以发现，在25k处，100k处，长期贷款（3-5年）均有新的贷款更大的峰值出现（10k，1.5k，2.5k）处，其分布趋势也有点类似。而1年期贷款也就是说短期贷款基本不受收入变化的影响。也就是说，短期贷款下，LoanOriginalAmount不受收入的影响，而长期贷款下，LoanOriginalAmount的分布受到收入增加的影响。  
+```{r echo=FALSE, Multivariate_Plots2.2}
+ggplot(data=pro_loan,aes(x=LoanOriginalAmount,y=..density..,color=Term))+
+  geom_line(stat = 'density')+
+  facet_grid( ProsperRating..Alpha.~.,scales = 'free_y')+
+  scale_color_brewer(type = 'seq',palette = 7)
+```
+
+从上图我们可以发现在随着信用等级的增加，长期贷款（3-5年）均有新的贷款更大的峰值出现（10k，1.5k），但是这些峰值在C达到最大，过了C，这些峰值个数又随着信用等级的增加而减少，在AA等级几乎看不到峰值。而1年期贷款也就是说短期贷款基本不受信用等级变化的影响。也就是说，短期贷款下，LoanOriginalAmount的分布不受信用等级的影响，而长期贷款下，LoanOriginalAmount集中趋势个数随着信用等级的增加，先增加又减少。  
+
+##DebtToIncomeRatio、LoanOriginalAmount与term之间的关系
+```{r echo=FALSE, message=FALSE, warning=FALSE, Multivariate_Plots3}
+ggplot(data=pro_loan,aes(x=DebtToIncomeRatio,y=LoanOriginalAmount,color=Term))+
+  geom_point(stat = 'summary',fun.y=median)+
+  geom_smooth()+coord_cartesian(ylim=c(0,16500))+
+  scale_color_brewer(type = 'seq',palette = 1)
+
+
+```
+   
+因为散点图不太明显了，故加入趋势线。我们可以发现，加入了借款人负债收入比这一变量后，1、3三年贷款的贷款随着负债收入比的变化趋于一致，都是一开始有个峰值，随后递增。而5年期贷款额与这两者完全不同，虽然也是现有峰值，但是随后先缓慢地增加再减少。也就是说，个人偿债能力下降的情况下，5年期贷款会现增加再减少，而1,3年贷款额会先下降再上升。而且我们还可以发现5年期的贷款额始终较高，其次是3年期，再次是1年期，这也符合常理。  
+
+
+
+##LoanOriginalAmount与DelinquenciesLast7Years、ProsperRating..Alpha.之间的关系
+```{r echo=FALSE, message=FALSE, warning=FALSE, Multivariate_Plots4}
+ggplot(data=subset(pro_loan,!is.na(ProsperRating..Alpha.)),
+       aes(x=DelinquenciesLast7Years,y=LoanOriginalAmount,
+           color=ProsperRating..Alpha.))+
+  geom_jitter()+
+  scale_color_brewer(type = 'seq', palette = 2)
+```
+  
+从该图我们可以发现，随着DelinquenciesLast7Years的增大，LoanOriginalAmount的值域（最大值）在不断地减少，信用等级也在不断变少。也就是说信用等级低且过去违约次数多的人只能贷到数额较低的贷款，而过去信用等级高、违约次数少的人等贷到更多的贷款。贷款额较少的几乎都是等级较少的，也就是颜色比较浅的地方。
+
+##在收入下变化下信用评分与贷款收益率的关系
+```{r echo=FALSE, message=FALSE, warning=FALSE, Multivariate_Plots5}
+ggplot(aes(x = ProsperScore,y=LenderYield*100, color = IncomeRange), 
+       data = subset(pro_loan,!is.na(ProsperScore))) + 
+  geom_jitter(alpha=1/2)+
+  scale_color_brewer(type = 'seq',palette = 8)
+```
+  
+这张图探索了贷款收益率、借款人信用等级与借款人收入范围直接的关系。从图中我们可以看出高信用等级(9-11)、高收入(75-100k)所贷贷款的贷款收益率往往更低，而低信用、低收入所贷贷款的贷款收益率往往更高。而信用等级、收入位于中间的借款人所贷贷款的贷款收益率没有什么规律。
+
+##构造决策树  
+
+```{r echo=FALSE, warning= FALSE,Multivariate_Plots10}
+library(party)
+decision_tree_v <- c("LenderYield","ProsperScore","EmploymentStatus" ,
+          "DebtToIncomeRatio","IncomeRange","LoanOriginalAmount","LoanStatus")
+decision_tree_data <- pro_loan[,decision_tree_v]
+
+dtree.ctree <- ctree(LoanStatus ~ ., 
+                     data =subset(decision_tree_data,!is.na(ProsperScore)) )
+
+#plot(dtree.ctree)
+cree.pred <- predict(dtree.ctree,  
+              subset(decision_tree_data,!is.na(ProsperScore)),type="response")
+ctree.pref<- table(subset(decision_tree_data,!is.na(ProsperScore))$LoanStatus
+                   ,cree.pred,dnn=c("Actual","Predicted"))
+ctree.pref
+```
+
+
+# 多变量分析
+
+###  探讨你在这部分探究中观察到的一些关系。通过观察感兴趣的特性，是否存在相互促进的特性？
+存在。  
+如第一图随着收入Incomerange的增加与信用ProsperRating..Alpha.的增加，lendyield贷款收益率减少。 
+如第四幅图，随着信用等级的高的与违约记录的少的，个人可贷款的金额也多。  
+
+
+### 这些特性之间是否存在有趣或惊人的联系呢？
+长期贷款的借款额度受到借款人信用等级与收入的影响，而短期期贷款则受到影响不大。  
+令我感到疑惑的是加入了借款人负债收入比这个变量后，1,3年与贷款额的关系一致，与5年贷款不同，我仍不能想明白。     
+  
+
+### 选项：你是否创建过数据集的任何模型？讨论你模型的优缺点。
+我把认为"LoanStatus"有关的变量"LenderYield","ProsperScore","EmploymentStatus" ,"DebtToIncomeRatio","IncomeRange","LoanOriginalAmount"做特征，构造了一个决策树模型；  
+优点：相对于回归来说，可以不用对字符串变量进行重新编码，就可以直接来做模型，简单明了。预测结果也还可以。同时与数据集紧密联系，因为搜集贷款数据一个目的就是给定借款人的各种条件，决定是否要贷给对方，对方是否会违约？决策树模型可以很好地对其分类。  
+缺点：模型太粗糙，变量选择虽然都是画图发现有一定相关性的，但是实际相关性未知。同时决策树枝叶太多了，不利于可视化。而且对决策数的原理也不是很清楚。  
+
+------
+
+# 定稿图与总结
+
+### 绘图一
+```{r echo=FALSE, message=FALSE, warning=FALSE,Plot_One}
+
+ggplot(data=pro_loan,aes(x=DebtToIncomeRatio,fill=I('#F79420')))+
+  geom_histogram(binwidth = 0.01)+
+  geom_vline(xintercept=0.4,color='blue')+
+  coord_cartesian(c(0,2))+
+  labs(title = "借款人负债收入比直方图")+
+  theme(plot.title=element_text(hjust=0.5))+
+geom_text(aes(x=0.49,y=2000,label="x=0.4"),size = 5)
+
+```
+
+
+### 描述一
+”DebtToIncomeRatio“也有一定的正态分布趋势，借款人的债务收入比率也是评估其偿债能力的重要指标。没有低于零的，也比较合理。该变量大部分集中在0-0.25,其中最大值为10，而且10还不少。负债收入比率=年负债/年税后收入，该指标反映支出能力的强弱，临界值为40%，达到这一数值则说明短期偿债能力可以得到保证。该比例能反映客户在一定时期财务状况的良好程度。从图中可以发现超过40%人不多，但10的实在太夸张了，这些负债比实在太高了，值得警惕。
+
+
+### 绘图二
+```{r echo=FALSE, message=FALSE, warning=FALSE,Plot_Two}
+ggplot(aes(x = ProsperScore,y=LenderYield*100, color = IncomeRange), 
+       data = subset(pro_loan,!is.na(ProsperScore))) + 
+  geom_jitter(alpha=1/2)+
+  scale_color_brewer(type = 'seq',palette = 8)+
+  ylab("LenderYield(100%)")+
+  labs(title = "不同收入范围下信用评分与贷款收益率的关系")+
+  theme(plot.title=element_text(hjust=0.5))+
+  scale_x_continuous(breaks = seq(0,11,1))+geom_smooth()
+```
+
+### 描述二
+
+这张图探索了贷款收益率、借款人信用等级与借款人收入范围直接的关系。这张图在原图的基础上加入了抖动，并且为了使图形更加直观，加入了趋势线。加入趋势线后，我们可以更加明显地发现三者的关系。
+从图中我们可以越往右下角颜色越深，而左上角颜色更浅，因而可以认定高信用等级(9-11)、高收入(75-100k)所贷贷款的贷款收益率往往更低，而低信用、低收入所贷贷款的贷款收益率往往更高。同时从趋势线我们可以看出，随着收入的增加，低收入群体的贷款收益率总体分布趋势高于高收入群体，而随着信用评分与收入同时增加，贷款收益率也是显著下降的，在最后信用最高的地方趋于一致。
+
+
+### 绘图三
+```{r echo=FALSE, message=FALSE, warning=FALSE, Plot_Three}
+ggplot(data=pro_loan,aes(x=DebtToIncomeRatio,y=LoanOriginalAmount,color=Term))+
+  geom_point(stat = 'summary',fun.y=median)+
+  geom_smooth()+coord_cartesian(ylim=c(0,16500))+
+  facet_grid(LoanStatus~.)+
+  labs(title = "在不同贷款期限与贷款状态下贷款与负债收入比的关系")+
+  theme(plot.title=element_text(hjust=0.5))+
+  scale_color_brewer(type = 'seq',palette = 1)+  
+  scale_x_continuous(breaks = seq(0,10,1 ))
+
+
+```
+  
+### 描述三
+因为散点图不太明显了，故加入趋势线,并调整了坐标轴。我们可以发现，加入了借款人负债收入比这一变量后，1、3三年贷款的贷款随着负债收入比的变化趋于一致，都是一开始有个峰值，随后递增。而5年期贷款额与这两者完全不同，虽然也是现有峰值，但是随后先缓慢地增加再减少。也就是说，个人偿债能力下降的情况下，5年期贷款会现增加再减少，而1,3年贷款额会先下降再上升。而且我们还可以发现5年期的贷款额始终较高，其次是3年期，再次是1年期，这也符合常理。  
+而在加入loanstaus这个变量后，可以发现了一个有趣的现象。也就是5年期贷款额随着负债收入比的增加这一趋势是违约人群产生，也就是说5年贷款中在2.5到5.0负债收入比的这部分人更倾向于贷更多的款，也更可能违约。同时可以发现负债收入比较低（0）附近，5年期贷款违约的人比非违约的人贷更少的钱。
+------
+
+# 反思  
+1.贷款数据集包含 113,937 项贷款，每项贷款有81个变量，包括贷款额、借款利率（或利率）、当前贷款状态、借款人收入、借款就业状态等。可供选择的变量太多了，这是我遇到的第一个问题，但是通过上网查询以及我本身的知识，通过了解数据集中的各个变量，一开始选取了20个变量，然后探索有趣的问题和线索，并继续对情节进行观察。最后，我将变量删减至14个，研究了许多变量与贷款额、利率之间的关系，最后根据贷款人最关心的LoanStatus也就是贷款状态，创建了一个预测钻借款人是否会违约的决策树分类模型。  
+
+2.借款人信用等级、借款人收入、贷款投资人数、贷款状态、过去7年的违约次数与贷款额之间有明显的趋势，借款人信用等级、借款人收入、贷款状态与利率之间有明显的趋势。我感到惊讶的是StatedMonthlyIncome与LoanOriginalAmount没有很强的正相关性，但是分类变量的收入范围却与其有关系。我很难理解短期贷款的借款额度受到借款人收入的影响，而长期贷款则受影响不大，这是应该进一步太多的。对于决策树模型，因为机器学习还没有正式学习，故变量选取仅选取前面作图发现有一定关系的变量，最后虽然做出了这个模型，但是不知如果评价这个模型的好坏。  
+
+在这次的数据探索中学习到了很多，但也遇到了很多问题。    
+（1）第一个问题就是如何从81个变量选取有关系的变量，这一点通过查资料解决了。     （2）数据的处理问题，因为之前都是使用python的，因而对于r语言处理数据不是很熟练，遇到了很多问题，还好论坛与百度解决了我的大部分问题。  
+（3）比较遗憾的是，我始终没有想到要创建什么新的变量，因为个人觉得现在的变量够用，而且似乎也没有很好的可以创建的变量。可能是我个人水平有限，这是我未解决的问题。  
+（4）通过相关性建议，发现大部分变量相关性并不好，个人觉得原因可能是影响贷款的因素太多了，不是线性相关关系所能解释的。但是这使得我不知道选择什么变量来做散点图。这花了我不少时间，尝试0.1-0.3相关的变量，也仅仅找到了微弱的缺失，横纵坐标变换的效果也不太好，最后终于找到了一些看起来有趋势的图。  
+（5）另外在项目提交格式上我也遇到了不少问题，因为不知道怎样才能做出跟样本文件一样的效果，所幸最后摸索出来了。
+（6）模型选择上面也是我遇到的问题，因为个人觉得这是个分类问题，因为贷款人关注的重要问题是贷款是否最后能收回来，有逻辑回归、决策树、随机森林等模型，但因为分类数据较多，个人觉得决策树模型更方便也更便于理解便选择了这个模型。  
+
+根据文中探索出的关系，提出如下建议：  
+（1）针对借款人：借款人要想贷到数额多且利率低的贷款，应该提高自身信用等级、收入，同时最好贷三年或五年期贷款。  
+（2）针对贷款人：应该多拉拢其他投资人，既可以增加可贷金额又可以分散风险。贷款给信用等级高、收入高的人群讨价还价能力较低，应该把贷款人群聚焦在信用等级、收入均处于中等水平的人。  
+（3）针对数据集：  
+a贷款数据集中LoanOriginalAmount集中趋势很明显，很多值集中在10000、15000等这样的值上面，未来或许可以把它转化为离散值或因子进行探索，这样的好处是更容易发现该变量与其他变量趋势，不会被过分集中的值影响，但缺点是或丧失数据的部分信息。  
+
+b变量LoanStatus中违约的数据相对于非违约的来说数据量太少了，因而在构建模型时，很难探索出容易违约人的特性，用决策树预测时可以很明显的发现样本少的几乎很难被预测到。因而在未来的工作中或许可以按比重科学地抽出违约与非违约的数据，好处是使得预测结果不会过分偏向于非违约，但是缺点是很难确定这个比重，同时可以不符合随机抽样，样本不具有代表性。
